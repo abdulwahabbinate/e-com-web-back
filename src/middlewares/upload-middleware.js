@@ -22,9 +22,7 @@ const createUploader = (folderName = "common") => {
     },
   });
 
-  return multer({
-    storage,
-  });
+  return multer({ storage });
 };
 
 module.exports = {

@@ -1,3 +1,6 @@
+const path = require("path");
+const fs = require("fs");
+
 const Category = require("../../models/Category");
 const slugify = require("../../utilities/helpers/slugify");
 const buildFileUrl = require("../../utilities/helpers/file-url");
@@ -5,6 +8,40 @@ const { handlers } = require("../../utilities/handlers/handlers");
 const { sendValidationError } = require("../../utilities/validations/common-validations");
 
 class Service {
+  getFilePathFromUrl(fileUrl) {
+    try {
+      if (!fileUrl) return "";
+
+      const normalizedUrl = String(fileUrl).replace(/\\/g, "/");
+      const uploadsMarker = "/uploads/";
+      const uploadsIndex = normalizedUrl.indexOf(uploadsMarker);
+
+      if (uploadsIndex === -1) return "";
+
+      const relativeUploadsPath = normalizedUrl.substring(uploadsIndex + 1); // uploads/xyz/file.jpg
+      return path.join(process.cwd(), relativeUploadsPath);
+    } catch (error) {
+      handlers.logger.error({
+        object_type: "get_file_path_from_url",
+        message: error.message,
+      });
+      return "";
+    }
+  }
+
+  removeFileIfExists(filePath) {
+    try {
+      if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      handlers.logger.error({
+        object_type: "remove_file_if_exists",
+        message: error.message,
+      });
+    }
+  }
+
   async createCategory(req, res) {
     try {
       const {
@@ -13,7 +50,6 @@ class Service {
         menu_section,
         group_title,
         sort_order,
-        icon,
         is_active,
       } = req.body;
 
@@ -26,7 +62,10 @@ class Service {
         });
       }
 
-      if (!menu_section || !["retail", "wholesale"].includes(String(menu_section).toLowerCase())) {
+      if (
+        !menu_section ||
+        !["retail", "wholesale"].includes(String(menu_section).toLowerCase())
+      ) {
         errors.push({
           field: "menu_section",
           message: "menu_section must be retail or wholesale",
@@ -75,7 +114,6 @@ class Service {
         menu_section: String(menu_section).toLowerCase(),
         group_title: group_title.trim(),
         sort_order: sort_order ? Number(sort_order) : 0,
-        icon: icon || "",
         is_active:
           typeof is_active === "undefined" ? true : String(is_active) === "true",
       });
@@ -114,6 +152,11 @@ class Service {
         data: categories,
       });
     } catch (error) {
+      handlers.logger.error({
+        object_type: "get_all_categories",
+        message: error.message,
+      });
+
       return handlers.response.error({
         res,
         message: "Internal server error",
@@ -141,6 +184,11 @@ class Service {
         data: category,
       });
     } catch (error) {
+      handlers.logger.error({
+        object_type: "get_category",
+        message: error.message,
+      });
+
       return handlers.response.error({
         res,
         message: "Internal server error",
@@ -157,8 +205,8 @@ class Service {
         menu_section,
         group_title,
         sort_order,
-        icon,
         is_active,
+        remove_image,
       } = req.body;
 
       const errors = [];
@@ -216,12 +264,27 @@ class Service {
       }
 
       if (name !== undefined && String(name).trim()) {
+        const newSlug = slugify(name);
+
+        const existingCategory = await Category.findOne({
+          slug: newSlug,
+          _id: { $ne: id },
+        });
+
+        if (existingCategory) {
+          return handlers.response.failed({
+            res,
+            code: 400,
+            message: "Category already exists",
+          });
+        }
+
         category.name = String(name).trim();
-        category.slug = slugify(name);
+        category.slug = newSlug;
       }
 
       if (description !== undefined) {
-        category.description = description.trim();
+        category.description = String(description).trim();
       }
 
       if (menu_section !== undefined) {
@@ -229,23 +292,27 @@ class Service {
       }
 
       if (group_title !== undefined) {
-        category.group_title = group_title.trim();
+        category.group_title = String(group_title).trim();
       }
 
       if (sort_order !== undefined) {
         category.sort_order = Number(sort_order);
       }
 
-      if (icon !== undefined) {
-        category.icon = icon;
-      }
-
       if (typeof is_active !== "undefined") {
         category.is_active = String(is_active) === "true";
       }
 
+      const shouldRemoveImage = String(remove_image) === "true";
+
       if (req.file) {
+        const oldImagePath = this.getFilePathFromUrl(category.image);
+        this.removeFileIfExists(oldImagePath);
         category.image = buildFileUrl(req, req.file.path);
+      } else if (shouldRemoveImage) {
+        const oldImagePath = this.getFilePathFromUrl(category.image);
+        this.removeFileIfExists(oldImagePath);
+        category.image = "";
       }
 
       await category.save();
@@ -282,6 +349,9 @@ class Service {
         });
       }
 
+      const oldImagePath = this.getFilePathFromUrl(category.image);
+      this.removeFileIfExists(oldImagePath);
+
       await category.deleteOne();
 
       return handlers.response.success({
@@ -289,6 +359,11 @@ class Service {
         message: "Category deleted successfully",
       });
     } catch (error) {
+      handlers.logger.error({
+        object_type: "delete_category",
+        message: error.message,
+      });
+
       return handlers.response.error({
         res,
         message: "Internal server error",
