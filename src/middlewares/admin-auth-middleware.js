@@ -1,37 +1,38 @@
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 const env = require("../config/env");
-const { handlers } = require("../utilities/handlers/handlers");
 
-module.exports = async (req, res, next) => {
+const adminAuthMiddleware = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return handlers.response.unauthorized({
-        res,
-        code: 403,
-        message: "Unauthorized",
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized access",
       });
     }
 
     const token = authHeader.split(" ")[1];
     const decoded = jwt.verify(token, env.JWT_SECRET);
 
-    if (!decoded || decoded.role !== "super_admin") {
-      return handlers.response.unauthorized({
-        res,
-        code: 403,
-        message: "Unauthorized",
+    const user = await User.findById(decoded.id || decoded._id);
+
+    if (!user || user.role !== "admin") {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized access",
       });
     }
 
-    req.admin = decoded;
+    req.admin = user;
     next();
   } catch (error) {
-    return handlers.response.unauthorized({
-      res,
-      code: 403,
-      message: "Invalid or expired token",
+    return res.status(401).json({
+      success: false,
+      message: "Unauthorized access",
     });
   }
 };
+
+module.exports = adminAuthMiddleware;

@@ -1,3 +1,6 @@
+const path = require("path");
+const fs = require("fs");
+
 const Product = require("../../models/Product");
 const Category = require("../../models/Category");
 const slugify = require("../../utilities/helpers/slugify");
@@ -6,6 +9,54 @@ const { handlers } = require("../../utilities/handlers/handlers");
 const { sendValidationError } = require("../../utilities/validations/common-validations");
 
 class Service {
+  getFilePathFromUrl(fileUrl) {
+    try {
+      if (!fileUrl) return "";
+
+      const normalizedUrl = String(fileUrl).replace(/\\/g, "/");
+      const uploadsMarker = "/uploads/";
+      const uploadsIndex = normalizedUrl.indexOf(uploadsMarker);
+
+      if (uploadsIndex === -1) return "";
+
+      const relativeUploadsPath = normalizedUrl.substring(uploadsIndex + 1);
+      return path.join(process.cwd(), relativeUploadsPath);
+    } catch (error) {
+      handlers.logger.error({
+        object_type: "product_get_file_path_from_url",
+        message: error.message,
+      });
+      return "";
+    }
+  }
+
+  removeFileIfExists(filePath) {
+    try {
+      if (filePath && fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    } catch (error) {
+      handlers.logger.error({
+        object_type: "product_remove_file_if_exists",
+        message: error.message,
+      });
+    }
+  }
+
+  removeMultipleFiles(fileUrls = []) {
+    try {
+      fileUrls.forEach((url) => {
+        const filePath = this.getFilePathFromUrl(url);
+        this.removeFileIfExists(filePath);
+      });
+    } catch (error) {
+      handlers.logger.error({
+        object_type: "product_remove_multiple_files",
+        message: error.message,
+      });
+    }
+  }
+
   async createProduct(req, res) {
     try {
       const {
@@ -121,6 +172,11 @@ class Service {
         data: products,
       });
     } catch (error) {
+      handlers.logger.error({
+        object_type: "get_all_products",
+        message: error.message,
+      });
+
       return handlers.response.error({
         res,
         message: "Internal server error",
@@ -151,6 +207,11 @@ class Service {
         data: product,
       });
     } catch (error) {
+      handlers.logger.error({
+        object_type: "get_product",
+        message: error.message,
+      });
+
       return handlers.response.error({
         res,
         message: "Internal server error",
@@ -174,6 +235,8 @@ class Service {
         is_active,
         sizes,
         colors,
+        keep_existing_images,
+        remove_all_images,
       } = req.body;
 
       const errors = [];
@@ -217,8 +280,23 @@ class Service {
       }
 
       if (title !== undefined && String(title).trim()) {
+        const newSlug = slugify(title);
+
+        const existingProduct = await Product.findOne({
+          slug: newSlug,
+          _id: { $ne: id },
+        });
+
+        if (existingProduct) {
+          return handlers.response.failed({
+            res,
+            code: 400,
+            message: "Product already exists",
+          });
+        }
+
         product.title = String(title).trim();
-        product.slug = slugify(title);
+        product.slug = newSlug;
       }
 
       if (short_description !== undefined) {
@@ -261,9 +339,45 @@ class Service {
         product.is_active = String(is_active) === "true";
       }
 
-      if (req.files && req.files.length > 0) {
-        product.images = req.files.map((file) => buildFileUrl(req, file.path));
+      let keptImages = product.images || [];
+
+      if (typeof keep_existing_images !== "undefined") {
+        let parsedKeepImages = [];
+
+        try {
+          parsedKeepImages = keep_existing_images
+            ? JSON.parse(keep_existing_images)
+            : [];
+        } catch (error) {
+          return sendValidationError({
+            res,
+            errors: [
+              {
+                field: "keep_existing_images",
+                message: "keep_existing_images must be valid JSON array",
+              },
+            ],
+          });
+        }
+
+        const removedImages = (product.images || []).filter(
+          (img) => !parsedKeepImages.includes(img)
+        );
+
+        this.removeMultipleFiles(removedImages);
+        keptImages = parsedKeepImages;
       }
+
+      if (String(remove_all_images) === "true") {
+        this.removeMultipleFiles(product.images || []);
+        keptImages = [];
+      }
+
+      const newUploadedImages = (req.files || []).map((file) =>
+        buildFileUrl(req, file.path)
+      );
+
+      product.images = [...keptImages, ...newUploadedImages];
 
       await product.save();
 
@@ -304,6 +418,7 @@ class Service {
         });
       }
 
+      this.removeMultipleFiles(product.images || []);
       await product.deleteOne();
 
       return handlers.response.success({
@@ -311,6 +426,11 @@ class Service {
         message: "Product deleted successfully",
       });
     } catch (error) {
+      handlers.logger.error({
+        object_type: "delete_product",
+        message: error.message,
+      });
+
       return handlers.response.error({
         res,
         message: "Internal server error",
