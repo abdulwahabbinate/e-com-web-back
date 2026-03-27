@@ -7,6 +7,10 @@ class Controller {
     await this.service.getAllProducts(req, res);
   }
 
+  async getCartProducts(req, res) {
+    await this.service.getCartProducts(req, res);
+  }
+
   async getProduct(req, res) {
     await this.service.getProduct(req, res);
   }

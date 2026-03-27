@@ -7,6 +7,11 @@ class Service {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
 
+  isValidPhone(phone = "") {
+    const sanitizedPhone = String(phone).replace(/[\s\-()+]/g, "");
+    return /^[0-9]{10,15}$/.test(sanitizedPhone);
+  }
+
   async submitContactMessage(req, res) {
     try {
       const { full_name, email, phone, subject, message } = req.body;
@@ -31,6 +36,25 @@ class Service {
         });
       }
 
+      if (!phone || !phone.trim()) {
+        errors.push({
+          field: "phone",
+          message: "Phone number is required",
+        });
+      } else if (!this.isValidPhone(phone.trim())) {
+        errors.push({
+          field: "phone",
+          message: "Please enter a valid phone number",
+        });
+      }
+
+      if (!subject || !subject.trim()) {
+        errors.push({
+          field: "subject",
+          message: "Subject is required",
+        });
+      }
+
       if (!message || !message.trim()) {
         errors.push({
           field: "message",
@@ -51,8 +75,8 @@ class Service {
       const contactMessage = await ContactMessage.create({
         full_name: full_name.trim(),
         email: email.trim().toLowerCase(),
-        phone: phone?.trim() || "",
-        subject: subject?.trim() || "",
+        phone: phone.trim(),
+        subject: subject.trim(),
         message: message.trim(),
       });
 

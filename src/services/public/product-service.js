@@ -183,19 +183,26 @@ class Service {
         .skip(skip)
         .limit(perPage);
 
-      const filteredProductsForMeta = await Product.find(filter).select("sizes price");
+      const filteredProductsForMeta =
+        await Product.find(filter).select("sizes price");
 
       const availableSizes = [
         ...new Set(
           filteredProductsForMeta.flatMap((item) =>
-            Array.isArray(item.sizes) ? item.sizes : []
-          )
+            Array.isArray(item.sizes) ? item.sizes : [],
+          ),
         ),
       ];
 
-      const allPrices = filteredProductsForMeta.map((item) => Number(item.price || 0));
-      const minAvailablePrice = allPrices.length ? Math.floor(Math.min(...allPrices)) : 0;
-      const maxAvailablePrice = allPrices.length ? Math.ceil(Math.max(...allPrices)) : 0;
+      const allPrices = filteredProductsForMeta.map((item) =>
+        Number(item.price || 0),
+      );
+      const minAvailablePrice = allPrices.length
+        ? Math.floor(Math.min(...allPrices))
+        : 0;
+      const maxAvailablePrice = allPrices.length
+        ? Math.ceil(Math.max(...allPrices))
+        : 0;
 
       return handlers.response.success({
         res,
@@ -219,6 +226,41 @@ class Service {
       });
     } catch (error) {
       console.log("getAllProducts error:", error);
+      return handlers.response.error({
+        res,
+        message: "Internal server error",
+      });
+    }
+  }
+
+  async getCartProducts(req, res) {
+    try {
+      const { ids = "" } = req.query;
+
+      const productIds = String(ids)
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      if (!productIds.length) {
+        return handlers.response.success({
+          res,
+          message: "Cart products retrieved successfully",
+          data: [],
+        });
+      }
+
+      const products = await Product.find({
+        _id: { $in: productIds },
+        is_active: true,
+      }).populate("category_id", "name slug");
+
+      return handlers.response.success({
+        res,
+        message: "Cart products retrieved successfully",
+        data: products,
+      });
+    } catch (error) {
       return handlers.response.error({
         res,
         message: "Internal server error",
