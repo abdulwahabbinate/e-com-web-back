@@ -2,10 +2,15 @@ const Product = require("../../models/Product");
 const Order = require("../../models/Order");
 const PaymentSetting = require("../../models/PaymentSetting");
 const sendEmail = require("../../utilities/helpers/send-email");
+const stripe = require("../../utilities/helpers/stripe");
 const { handlers } = require("../../utilities/handlers/handlers");
-const { sendValidationError } = require("../../utilities/validations/common-validations");
+const {
+  sendValidationError,
+} = require("../../utilities/validations/common-validations");
 
 class Service {
+  SHIPPING_COST = 15;
+
   isValidEmail(email = "") {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
@@ -15,11 +20,49 @@ class Service {
     return /^[0-9]{10,15}$/.test(sanitizedPhone);
   }
 
-  buildOrderNumber() {
-    const now = new Date();
-    const year = now.getFullYear();
-    const random = Math.floor(1000 + Math.random() * 9000);
-    return `ORD-${year}-${random}`;
+  async getDefaultPaymentSetting() {
+    const envPublishableKey = String(
+      process.env.STRIPE_PUBLISHABLE_KEY || ""
+    ).trim();
+
+    let paymentSetting = await PaymentSetting.findOne({ slug: "default" });
+
+    if (!paymentSetting) {
+      paymentSetting = await PaymentSetting.create({
+        slug: "default",
+        cash_on_delivery_enabled: false,
+        card_payment_enabled: true,
+        gateway_name: "stripe",
+        sandbox_mode: envPublishableKey.startsWith("pk_test_"),
+        stripe_publishable_key: envPublishableKey,
+      });
+    } else if (!paymentSetting.stripe_publishable_key && envPublishableKey) {
+      paymentSetting.stripe_publishable_key = envPublishableKey;
+      if (!paymentSetting.gateway_name) {
+        paymentSetting.gateway_name = "stripe";
+      }
+      await paymentSetting.save();
+    }
+
+    return paymentSetting;
+  }
+
+  async buildUniqueOrderNumber() {
+    let orderNumber = "";
+
+    while (true) {
+      const now = new Date();
+      const year = now.getFullYear();
+      const time = now.getTime().toString().slice(-6);
+      const random = Math.floor(100000 + Math.random() * 900000);
+
+      orderNumber = `ORD-${year}-${time}-${random}`;
+
+      const exists = await Order.exists({ order_number: orderNumber });
+      if (!exists) break;
+    }
+
+    return orderNumber;
   }
 
   async createOrder(req, res) {
@@ -40,44 +83,77 @@ class Service {
       } = req.body;
 
       const errors = [];
+      const normalizedPaymentMethod = String(payment_method || "")
+        .trim()
+        .toLowerCase();
 
       if (!first_name || !String(first_name).trim()) {
-        errors.push({ field: "first_name", message: "First name is required" });
+        errors.push({
+          field: "first_name",
+          message: "First name is required",
+        });
       }
 
       if (!last_name || !String(last_name).trim()) {
-        errors.push({ field: "last_name", message: "Last name is required" });
+        errors.push({
+          field: "last_name",
+          message: "Last name is required",
+        });
       }
 
       if (!email || !String(email).trim()) {
-        errors.push({ field: "email", message: "Email is required" });
+        errors.push({
+          field: "email",
+          message: "Email is required",
+        });
       } else if (!this.isValidEmail(String(email).trim())) {
-        errors.push({ field: "email", message: "Please enter a valid email address" });
+        errors.push({
+          field: "email",
+          message: "Please enter a valid email address",
+        });
       }
 
       if (!phone || !String(phone).trim()) {
-        errors.push({ field: "phone", message: "Phone number is required" });
+        errors.push({
+          field: "phone",
+          message: "Phone number is required",
+        });
       } else if (!this.isValidPhone(String(phone).trim())) {
-        errors.push({ field: "phone", message: "Please enter a valid phone number" });
+        errors.push({
+          field: "phone",
+          message: "Please enter a valid phone number",
+        });
       }
 
       if (!country || !String(country).trim()) {
-        errors.push({ field: "country", message: "Country is required" });
+        errors.push({
+          field: "country",
+          message: "Country is required",
+        });
       }
 
       if (!city || !String(city).trim()) {
-        errors.push({ field: "city", message: "City is required" });
+        errors.push({
+          field: "city",
+          message: "City is required",
+        });
       }
 
       if (!address || !String(address).trim()) {
-        errors.push({ field: "address", message: "Address is required" });
+        errors.push({
+          field: "address",
+          message: "Address is required",
+        });
       }
 
       if (!postal_code || !String(postal_code).trim()) {
-        errors.push({ field: "postal_code", message: "Postal code is required" });
+        errors.push({
+          field: "postal_code",
+          message: "Postal code is required",
+        });
       }
 
-      if (!payment_method || !["card", "cod"].includes(String(payment_method))) {
+      if (!["card", "cod"].includes(normalizedPaymentMethod)) {
         errors.push({
           field: "payment_method",
           message: "Payment method must be card or cod",
@@ -91,27 +167,19 @@ class Service {
         });
       }
 
-      let paymentSetting = await PaymentSetting.findOne({ slug: "default" });
+      const paymentSetting = await this.getDefaultPaymentSetting();
 
-      if (!paymentSetting) {
-        paymentSetting = await PaymentSetting.create({
-          slug: "default",
-          cash_on_delivery_enabled: false,
-          card_payment_enabled: true,
-          gateway_name: "stripe",
-          sandbox_mode: true,
-          stripe_publishable_key: process.env.STRIPE_PUBLISHABLE_KEY || "",
-        });
-      }
-
-      if (payment_method === "cod" && !paymentSetting.cash_on_delivery_enabled) {
+      if (
+        normalizedPaymentMethod === "cod" &&
+        !paymentSetting.cash_on_delivery_enabled
+      ) {
         errors.push({
           field: "payment_method",
           message: "Cash on delivery is currently unavailable",
         });
       }
 
-      if (payment_method === "card") {
+      if (normalizedPaymentMethod === "card") {
         if (!paymentSetting.card_payment_enabled) {
           errors.push({
             field: "payment_method",
@@ -119,7 +187,10 @@ class Service {
           });
         }
 
-        if (!stripe_payment_intent_id || !String(stripe_payment_intent_id).trim()) {
+        if (
+          !stripe_payment_intent_id ||
+          !String(stripe_payment_intent_id).trim()
+        ) {
           errors.push({
             field: "stripe_payment_intent_id",
             message: "Stripe payment confirmation is required",
@@ -131,7 +202,22 @@ class Service {
         return sendValidationError({ res, errors });
       }
 
-      const productIds = items.map((item) => item.product_id).filter(Boolean);
+      const normalizedItems = items
+        .map((item) => ({
+          product_id: String(item?.product_id || "").trim(),
+          qty: Number(item?.qty || 0),
+        }))
+        .filter((item) => item.product_id);
+
+      if (!normalizedItems.length) {
+        return handlers.response.failed({
+          res,
+          code: 400,
+          message: "No valid order items found",
+        });
+      }
+
+      const productIds = normalizedItems.map((item) => item.product_id);
 
       const products = await Product.find({
         _id: { $in: productIds },
@@ -143,12 +229,12 @@ class Service {
         return acc;
       }, {});
 
-      const normalizedItems = [];
+      const orderItems = [];
       let subtotal = 0;
       let totalItems = 0;
 
-      for (const item of items) {
-        const product = productMap[String(item.product_id)];
+      for (const item of normalizedItems) {
+        const product = productMap[item.product_id];
 
         if (!product) {
           return handlers.response.failed({
@@ -158,9 +244,7 @@ class Service {
           });
         }
 
-        const qty = Number(item.qty || 0);
-
-        if (!qty || qty < 1) {
+        if (!item.qty || item.qty < 1) {
           return handlers.response.failed({
             res,
             code: 400,
@@ -168,7 +252,7 @@ class Service {
           });
         }
 
-        if (Number(product.stock || 0) < qty) {
+        if (Number(product.stock || 0) < item.qty) {
           return handlers.response.failed({
             res,
             code: 400,
@@ -176,25 +260,75 @@ class Service {
           });
         }
 
-        const lineTotal = Number(product.price || 0) * qty;
+        const lineTotal = Number(product.price || 0) * item.qty;
 
         subtotal += lineTotal;
-        totalItems += qty;
+        totalItems += item.qty;
 
-        normalizedItems.push({
+        orderItems.push({
           product_id: product._id,
           title: product.title,
           image: product.images?.[0] || "",
           price: Number(product.price || 0),
-          qty,
+          qty: item.qty,
           line_total: lineTotal,
         });
       }
 
-      const shipping = normalizedItems.length > 0 ? 15 : 0;
+      const shipping = orderItems.length > 0 ? this.SHIPPING_COST : 0;
       const total = subtotal + shipping;
 
-      for (const item of normalizedItems) {
+      if (normalizedPaymentMethod === "card") {
+        const paymentIntentId = String(stripe_payment_intent_id).trim();
+
+        const existingOrder = await Order.findOne({
+          stripe_payment_intent_id: paymentIntentId,
+        });
+
+        if (existingOrder) {
+          return handlers.response.success({
+            res,
+            message: "Order already placed successfully",
+            data: {
+              _id: existingOrder._id,
+              order_number: existingOrder.order_number,
+              total: existingOrder.total,
+              payment_status: existingOrder.payment_status,
+              order_status: existingOrder.order_status,
+            },
+          });
+        }
+
+        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (!paymentIntent || paymentIntent.status !== "succeeded") {
+          return handlers.response.failed({
+            res,
+            code: 400,
+            message: "Payment is not completed yet",
+          });
+        }
+
+        const expectedAmount = Math.round(total * 100);
+
+        if (Number(paymentIntent.amount || 0) !== expectedAmount) {
+          return handlers.response.failed({
+            res,
+            code: 400,
+            message: "Paid amount does not match order total",
+          });
+        }
+
+        if (String(paymentIntent.currency || "").toLowerCase() !== "usd") {
+          return handlers.response.failed({
+            res,
+            code: 400,
+            message: "Invalid payment currency",
+          });
+        }
+      }
+
+      for (const item of orderItems) {
         await Product.updateOne(
           { _id: item.product_id },
           { $inc: { stock: -item.qty } }
@@ -202,7 +336,11 @@ class Service {
       }
 
       const order = await Order.create({
-        order_number: this.buildOrderNumber(),
+        order_number: await this.buildUniqueOrderNumber(),
+        stripe_payment_intent_id:
+          normalizedPaymentMethod === "card"
+            ? String(stripe_payment_intent_id).trim()
+            : "",
         customer: {
           first_name: String(first_name).trim(),
           last_name: String(last_name).trim(),
@@ -214,13 +352,13 @@ class Service {
           postal_code: String(postal_code).trim(),
           notes: String(notes || "").trim(),
         },
-        items: normalizedItems,
+        items: orderItems,
         subtotal,
         shipping,
         total_items: totalItems,
         total,
-        payment_method,
-        payment_status: payment_method === "card" ? "paid" : "pending",
+        payment_method: normalizedPaymentMethod,
+        payment_status: normalizedPaymentMethod === "card" ? "paid" : "pending",
         order_status: "placed",
       });
 
@@ -230,6 +368,7 @@ class Service {
         <p>Your order <strong>${order.order_number}</strong> has been placed successfully.</p>
         <p>Total: <strong>$${order.total.toFixed(2)}</strong></p>
         <p>Payment Method: <strong>${order.payment_method.toUpperCase()}</strong></p>
+        <p>Thank you for shopping with us.</p>
       `;
 
       const adminEmailHtml = `
@@ -237,7 +376,9 @@ class Service {
         <p>Order Number: <strong>${order.order_number}</strong></p>
         <p>Customer: ${order.customer.first_name} ${order.customer.last_name}</p>
         <p>Email: ${order.customer.email}</p>
+        <p>Phone: ${order.customer.phone}</p>
         <p>Total: <strong>$${order.total.toFixed(2)}</strong></p>
+        <p>Payment Method: <strong>${order.payment_method.toUpperCase()}</strong></p>
       `;
 
       try {
@@ -270,9 +411,11 @@ class Service {
         },
       });
     } catch (error) {
+      console.log("createOrder error:", error);
+
       return handlers.response.error({
         res,
-        message: "Internal server error",
+        message: error?.message || "Internal server error",
       });
     }
   }

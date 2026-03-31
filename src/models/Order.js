@@ -41,6 +41,12 @@ const orderSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
+    stripe_payment_intent_id: {
+      type: String,
+      default: "",
+      trim: true,
+      index: true,
+    },
     customer: {
       first_name: {
         type: String,
