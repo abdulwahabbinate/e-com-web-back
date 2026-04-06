@@ -131,6 +131,25 @@ const orderSchema = new mongoose.Schema(
       enum: ["placed", "processing", "shipped", "delivered", "cancelled"],
       default: "placed",
     },
+    email_notifications: {
+      customer_email_sent: {
+        type: Boolean,
+        default: false,
+      },
+      admin_email_sent: {
+        type: Boolean,
+        default: false,
+      },
+      email_sent_at: {
+        type: Date,
+        default: null,
+      },
+      last_error_message: {
+        type: String,
+        default: "",
+        trim: true,
+      },
+    },
   },
   { timestamps: true }
 );

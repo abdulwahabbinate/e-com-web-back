@@ -12,6 +12,7 @@ const adminContectMessageRoutes = require("./admin/admin-contact-message-routes"
 const adminSettingsRoutes = require("./admin/admin-settings-routes");
 const adminDashboardRoutes = require("./admin/admin-dashboard-routes");
 const adminPaymentSettingsRoutes = require("./admin/admin-payment-setting-routes");
+const adminNewsletterRoute = require("./admin/admin-newsletter-route");
 
 const publicHomePageRoutes = require("./public/home-page-routes");
 const publicAboutPageRoutes = require("./public/about-page-routes");
@@ -25,6 +26,8 @@ const publicOrdersRoutes = require("./public/order-routes");
 const publicPaymentSettingsRoutes = require("./public/payment-setting-routes");
 const publicStripeRoutes = require("./public/stripe-payment-routes");
 
+const newsletterRoute = require("./newsletter/newsletter-route");
+
 router.use("/admin/auth", adminAuthRoutes);
 router.use("/admin/home-page", adminHomePageRoutes);
 router.use("/admin/about-page", adminAboutPageRoutes);
@@ -37,6 +40,7 @@ router.use("/admin/contact-messages", adminContectMessageRoutes);
 router.use("/admin/settings", adminSettingsRoutes);
 router.use("/admin/dashboard", adminDashboardRoutes);
 router.use("/admin/payment-settings", adminPaymentSettingsRoutes);
+router.use("/admin/newsletter", adminNewsletterRoute);
 
 router.use("/home-page", publicHomePageRoutes);
 router.use("/about-page", publicAboutPageRoutes);
@@ -49,5 +53,8 @@ router.use("/settings", publicSettingsRoutes);
 router.use("/orders", publicOrdersRoutes);
 router.use("/payment-settings", publicPaymentSettingsRoutes);
 router.use("/stripe", publicStripeRoutes);
+
+router.use("/newsletter", newsletterRoute);
+
 
 module.exports = router;
